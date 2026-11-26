@@ -84,3 +84,11 @@ the naive forecast made the same average error.
 comparisons, the decision rules and the effect-size thresholds, all fixed before
 any model was run. One pre-registered prediction failed and is reported as a
 failure: more history did not widen the gap between the two designs.
+
+## Authors
+
+Adit Jindal, Ishandeep Singh, Garvit Singhal and Dhruv Kumar.
+
+## Licence
+
+MIT. See `LICENSE`.
