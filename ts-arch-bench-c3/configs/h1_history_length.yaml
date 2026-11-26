@@ -1,0 +1,93 @@
+# H1 - history length. See PREREGISTRATION.md §6, H1.
+#
+# One backbone, five history lengths, nine query types, three arms. The pool
+# is fixed across L (invariants I1/I2), so the same item is tracked along the
+# sweep rather than resampled.
+#
+# Confirmatory test is the item-level difference-in-differences between
+# L=512 and L=32, m=3. The five-point curve is reported as shape only.
+#
+# COST SHAPE: classify prompts contain only question text, so all 5 L values
+# share the SAME classify calls - the sweep costs nothing extra there. What
+# scales with L is the bare arm's prompt (~900 tokens at L=128, ~3.5k at
+# L=512) and the qualitative feature prompts.
+seed: 20261102
+out_dir: results/h1_history_length
+
+data:
+  name: synthetic
+  pool_dir: data/main_n100
+  max_history: 512
+  horizon: 8
+  n_base_series: 100
+  n_per_query_type: 100
+  level_range: [20, 120]
+  patterns: [trend, seasonality, multi_seasonality, noise, spikes, abrupt_change, mixed]
+
+history_lengths: [32, 64, 128, 256, 512]
+
+query_types:
+  - {name: forecasting,       kind: forecast}
+  - {name: statistics,        kind: numeric_exact}
+  - {name: counting,          kind: numeric_exact}
+  - {name: extremum,          kind: numeric_exact}
+  - {name: change,            kind: numeric_exact}
+  - {name: correlation,       kind: numeric_exact}
+  - {name: localization,      kind: localization}
+  - {name: trend_description, kind: qualitative}
+  - {name: event_explanation, kind: qualitative}
+
+backbones:
+  qwen2_5_32b:
+    provider: openai_compatible
+    model: Qwen/Qwen2.5-32B-Instruct
+    strength: 0.690                 # MMLU-Pro 69.0; H3's x-axis only
+    params:
+      base_url: http://127.0.0.1:8000/v1   # loopback only; see h2 config
+      api_key: none
+      temperature: 0.0
+      # L=512 puts ~3.5k tokens of series in the prompt. vLLM must be
+      # launched with --max-model-len >= 8192 or long-L cells will be
+      # rejected rather than answered, which would read as a failure of the
+      # bare arm instead of a serving misconfiguration.
+      max_tokens: 1024
+
+systems:
+  - {name: bare_llm,       kind: bare_llm,     backbone: qwen2_5_32b}
+  - {name: harness,        kind: harness_tsfm, backbone: qwen2_5_32b, routing: self}
+  - {name: harness_oracle, kind: harness_tsfm, backbone: qwen2_5_32b, routing: oracle}
+
+tsfm:
+  name: chronos
+  model_id: amazon/chronos-t5-small
+  device_map: cuda
+  torch_dtype: bfloat16
+  num_samples: 20
+
+judge: {enabled: false}
+
+scoring:
+  tol: 0.05
+  loc_tol: 2
+  # Pinned across L on purpose: a denominator recomputed per L would make
+  # the forecast score incomparable along the very axis H1 sweeps.
+  fixed_mase_denominator: true
+
+analysis:
+  alpha: 0.05
+  min_effect: 0.02
+  min_n_per_cell: 85
+  n_boot: 5000
+  correction: holm
+  confirmatory_contrast: [bare_llm, harness]
+  # D6: exactly the non-saturated cells. Saturated cells' gaps are
+  # redundant with route_correct + the oracle ablation (PREREG §3).
+  confirmatory_family: [forecasting, trend_description, event_explanation]
+  secondary_contrast: [harness, harness_oracle]
+  framing_variance_threshold: 0.20
+  # L at which the clustering rule and the secondary ablation are evaluated
+  reference_L: 128
+
+harness:
+  numeric_final: direct
+  assist_qualitative: true

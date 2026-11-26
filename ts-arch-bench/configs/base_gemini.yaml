@@ -1,0 +1,77 @@
+# Base template for a real run on the Gemini backbone.
+#
+# THREE ARMS, not two. The oracle-routing arm is the standard ablation for a
+# pipeline system: it decomposes error into ROUTING failure versus EXECUTION
+# failure, which the old two-arm design fused - and that fusion is why a
+# router bug read as an architecture finding. The gap between `harness` and
+# `harness_oracle` is the honest upper bound on what fixing the router buys.
+#
+# Note there is no `tslm` entry. The old configs carried `tslm: mock_tslm`
+# but no system had kind `multimodal_tslm`, so it was constructed and never
+# called. This is a two-architecture study (three arms, two architectures)
+# and the README says so.
+seed: 20261102
+out_dir: results/base_gemini
+
+data:
+  name: synthetic
+  pool_dir: data/base_n100          # honoured by every runner
+  max_history: 512
+  horizon: 8
+  n_base_series: 100
+  n_per_query_type: 100
+  level_range: [20, 120]
+  patterns: [trend, seasonality, multi_seasonality, noise, spikes, abrupt_change, mixed]
+
+history_lengths: [128]
+
+query_types:
+  - {name: forecasting,       kind: forecast}
+  - {name: statistics,        kind: numeric_exact}
+  - {name: counting,          kind: numeric_exact}
+  - {name: extremum,          kind: numeric_exact}
+  - {name: change,            kind: numeric_exact}
+  - {name: correlation,       kind: numeric_exact}
+  - {name: localization,      kind: localization}
+  - {name: trend_description, kind: qualitative}
+  - {name: event_explanation, kind: qualitative}
+
+backbones:
+  gemini_flash:
+    provider: gemini
+    model: gemini-3.5-flash-lite
+    strength: 0.7                   # external capability score, H3 x-axis only
+    params:
+      temperature: 0.0              # now actually applied (was dropped)
+      max_tokens: 1024
+      request_delay_s: 4
+
+systems:
+  - {name: bare_llm,       kind: bare_llm,     backbone: gemini_flash}
+  - {name: harness,        kind: harness_tsfm, backbone: gemini_flash, routing: self}
+  - {name: harness_oracle, kind: harness_tsfm, backbone: gemini_flash, routing: oracle}
+
+tsfm:
+  name: chronos
+  model_id: amazon/chronos-t5-small
+  device_map: cpu
+  torch_dtype: float32
+  num_samples: 20                   # one value everywhere; was 20 in H2, 10 in H3
+
+judge: {enabled: false}             # see evaluation/judge.py before enabling
+
+scoring:
+  tol: 0.05                         # fraction of the operation's natural scale
+  loc_tol: 2                        # index steps
+  fixed_mase_denominator: true
+
+analysis:
+  alpha: 0.05
+  min_effect: 0.02
+  min_n_per_cell: 85
+  n_boot: 5000
+  correction: holm
+
+harness:
+  numeric_final: direct
+  assist_qualitative: true

@@ -1,0 +1,23 @@
+# virtualenvs
+.venv*/
+# generated data pools and results
+data/
+results/
+# downloaded Monash .tsf files: ~350 MB after the cycle-3 additions
+# (weather alone is 212 MB), re-fetchable and hash-pinned by
+# data-real/fetch.py. The built pools ARE tracked - a changed pool silently
+# breaks the paired design, which is also why every real config declares
+# `data.pool_sha256` (PREREGISTRATION_C3.md C3-4).
+data-real/raw/
+# caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.pytest_tmp/
+# editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+# archives
+*.zip

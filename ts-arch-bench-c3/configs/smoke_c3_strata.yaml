@@ -1,0 +1,70 @@
+# SMOKE TEST for the cycle-3 real-data path. MOCK BACKBONE - NOT A RESULT.
+#
+# The stratum-balanced twin of smoke_c3_real.yaml. Exercises the reframed-H2
+# runner: the two-sample stratum contrast, the within-dataset confound
+# control, and the per-stratum baseline tables.
+#
+# ⚠ `MockLLM` reads `src.ground_truth` to synthesise answers at a target
+# accuracy, so every number this produces validates PLUMBING ONLY. The
+# runners print a loud banner saying so; do not quote anything from here.
+#
+#   python -m runners.h2_series_character --config configs/smoke_c3_strata.yaml
+seed: 20261114
+out_dir: results/smoke_c3_strata
+
+data:
+  name: real
+  design: c2
+  pool_dir: data-real/pool_h2_strata_n240
+  pool_sha256: 7d6a2e80d15636bc507734783c3582f14b19e23953ad3cae63ef8b98d263eefc
+  max_history: 512
+  horizon: 24
+
+history_lengths: [128]
+
+query_types:
+  - {name: forecasting, kind: forecast}
+
+backbones:
+  mock_mid:
+    provider: mock
+    model: mock-llm
+    strength: 0.6
+
+systems:
+  - {name: bare_llm,       kind: bare_llm,     backbone: mock_mid}
+  - {name: bare_features,  kind: bare_llm,     backbone: mock_mid, params: {features: true}}
+  - {name: harness,        kind: harness_tsfm, backbone: mock_mid, routing: self}
+  - {name: harness_oracle, kind: harness_tsfm, backbone: mock_mid, routing: oracle}
+
+tsfm: {name: mock_tsfm, noise: 0.05}
+
+judge: {enabled: false}
+
+scoring:
+  tol: 0.05
+  loc_tol: 2
+  fixed_mase_denominator: true
+
+analysis:
+  alpha: 0.05
+  min_effect: 0.02
+  min_n_per_cell: 50
+  # Small, because this run exists to prove the wiring, not to measure.
+  n_boot: 200
+  correction: holm
+  confirmatory_contrast: [bare_llm, harness]
+  confirmatory_family: [forecasting]
+  secondary_contrast: [harness, harness_oracle]
+  extra_contrasts:
+    - [bare_llm, bare_features]
+    - [bare_features, harness]
+  framing_variance_threshold: 0.20
+  cluster_unit: sample_id
+  cluster_unit_sensitivity: [dataset_id]
+  stratum_contrast: [weak, strong]
+  min_items_per_stratum_for_within_dataset: 20
+
+harness:
+  numeric_final: direct
+  assist_qualitative: true

@@ -1,0 +1,74 @@
+# H3 plumbing check on the mock backbone. NO result, NO verdict.
+#
+# Three mock "rungs" of increasing strength. The mock's accuracy is a
+# function of `strength` BY CONSTRUCTION, so H3's shrinking-gap pattern is
+# guaranteed here - which is precisely why this validates the code path and
+# measures nothing. The runner's banner says so.
+#
+# Note the strength axis is honestly declared even in the smoke config: the
+# source is the mock's own parameter, which is exactly the circularity the
+# real config forbids. It is legitimate here only because nothing is
+# reported from a mock run.
+seed: 20261102
+out_dir: results/smoke_h3
+
+data:
+  name: synthetic
+  pool_dir: data/smoke_runners
+  max_history: 256
+  horizon: 8
+  n_base_series: 14
+  n_per_query_type: 14
+  level_range: [20, 120]
+  patterns: [trend, seasonality, multi_seasonality, noise, spikes, abrupt_change, mixed]
+
+history_lengths: [128]
+
+query_types:
+  - {name: forecasting,       kind: forecast}
+  - {name: statistics,        kind: numeric_exact}
+  - {name: counting,          kind: numeric_exact}
+  - {name: extremum,          kind: numeric_exact}
+  - {name: change,            kind: numeric_exact}
+  - {name: correlation,       kind: numeric_exact}
+  - {name: localization,      kind: localization}
+  - {name: trend_description, kind: qualitative}
+  - {name: event_explanation, kind: qualitative}
+
+backbones:
+  mock_weak:   {provider: mock, model: mock-llm, strength: 0.25}
+  mock_mid:    {provider: mock, model: mock-llm, strength: 0.60}
+  mock_strong: {provider: mock, model: mock-llm, strength: 0.90}
+
+systems:
+  - {name: bare_llm,       kind: bare_llm,     backbone: mock_weak}
+  - {name: harness,        kind: harness_tsfm, backbone: mock_weak, routing: self}
+  - {name: harness_oracle, kind: harness_tsfm, backbone: mock_weak, routing: oracle}
+
+tsfm: {name: mock_tsfm, noise: 0.0}
+mocks: {error_scale: 0.25, prose_rate: 0.15, length_effect: 0.0}
+judge: {enabled: false}
+scoring: {tol: 0.05, loc_tol: 2, fixed_mase_denominator: true}
+
+analysis:
+  alpha: 0.05
+  min_effect: 0.02
+  min_n_per_cell: 10
+  n_boot: 500
+  correction: holm
+  confirmatory_contrast: [bare_llm, harness]
+  # D6: exactly the non-saturated cells. Saturated cells' gaps are
+  # redundant with route_correct + the oracle ablation (PREREG §3).
+  confirmatory_family: [forecasting, trend_description, event_explanation]
+  secondary_contrast: [harness, harness_oracle]
+  framing_variance_threshold: 0.20
+  ladder: [mock_weak, mock_mid, mock_strong]
+  robustness_backbones: []
+  strength_metric: "MockLLM `strength` parameter (CIRCULAR - mock only)"
+  strength_source: "configs/smoke_h3.yaml"
+  strength_retrieved: "2026-11-06"
+  # exercises the secondary-axis code path on the mock (also circular)
+  strength_alt_metric: "MockLLM strength, squared (CIRCULAR - mock only)"
+  strength_alt: {mock_weak: 0.0625, mock_mid: 0.36, mock_strong: 0.81}
+
+harness: {numeric_final: direct, assist_qualitative: true}

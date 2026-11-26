@@ -1,0 +1,130 @@
+# CYCLE 3 - HORIZON SENSITIVITY. PREREGISTRATION_C3.md C3-2.
+#
+# Identical to configs/c3_h1_clean.yaml except horizon 24 -> 8, and a single
+# history length. The primary horizon is 24 because that is exactly one
+# declared seasonal cycle for the hourly series of the pool; h=8 is a
+# THIRD of a cycle, which is seasonal naive's easiest regime and is where
+# cycle 2 ran.
+#
+# This arm exists so the horizon choice can be shown not to drive the
+# result, and so there is ONE point of contact with cycle 2's h=8 numbers.
+# It is a sensitivity arm: it consumes no share of the Holm family, and it
+# is a separate run rather than a re-scoring because the question text
+# states the horizon, so the arms' prompts and hence their calls differ.
+#
+#   python -m runners.h2_query_type --config configs/c3_sensitivity_h8.yaml
+seed: 20261114
+out_dir: results/c3_sensitivity_h8
+
+# CONTAMINATION-CONTROLLED POOL. Every dataset is in Chronos Benchmark II,
+# i.e. NOT in the Chronos training corpus (arXiv:2403.07815, Table 2,
+# verified against series counts and lengths - see data-real/MANIFEST.json).
+# `configs/c3_h1_contaminated.yaml` reruns this identical design on
+# pool_real_n300, half of which IS in that corpus, as the declared
+# contamination-sensitivity arm.
+data:
+  name: real
+  design: c2
+  pool_dir: data-real/pool_clean_n300
+  # The pool's content address. A paired design across five history lengths
+  # is only valid if every cell saw the same 300 series, so the hash is
+  # declared, not discovered; it is also part of data_fingerprint(), so a
+  # rebuilt pool can never collide with cached answers for the old one.
+  pool_sha256: 5e7fade71450e8ae1aacd183edfc8fd9218694a6c9509bb295730d3ae2df6538
+  max_history: 512
+  # PRIMARY horizon (C3-2). 24 is exactly one declared seasonal cycle for
+  # the hourly series of the pool. Cycle 2's h=8 is a THIRD of a cycle on
+  # period-24 data, which is seasonal naive's easiest regime and is why its
+  # bar sits at 0.667; keeping h=8 "for comparability" would be a false
+  # economy, since changing the data already breaks comparability.
+  # The declared sensitivity is h=8: configs/c3_sensitivity_h8.yaml.
+  horizon: 8
+
+history_lengths: [128]
+
+# The ONLY cell real data can carry. m = 1.
+query_types:
+  - {name: forecasting, kind: forecast}
+
+backbones:
+  qwen2_5_32b:
+    provider: openai_compatible
+    model: Qwen/Qwen2.5-32B-Instruct
+    strength: 0.690
+    params:
+      # ALWAYS the loopback address: base_url is in the cache fingerprint.
+      base_url: http://127.0.0.1:8000/v1
+      api_key: none
+      temperature: 0.0
+      max_tokens: 1024
+
+# FOUR arms on the L-sweep. `bare_features` is KEPT here and dropped from the
+# wide ride-along (C3-9): it measured three independent nulls on synthetic
+# forecasting, but those were synthetic series. Real series have genuine
+# structure, so computed features are plausibly more useful on them, and one
+# backbone's worth of calls is what keeps that question answerable.
+systems:
+  - {name: bare_llm,       kind: bare_llm,     backbone: qwen2_5_32b}
+  - {name: bare_features,  kind: bare_llm,     backbone: qwen2_5_32b, params: {features: true}}
+  - {name: harness,        kind: harness_tsfm, backbone: qwen2_5_32b, routing: self}
+  - {name: harness_oracle, kind: harness_tsfm, backbone: qwen2_5_32b, routing: oracle}
+
+tsfm:
+  name: chronos
+  model_id: amazon/chronos-t5-small
+  device_map: cuda                  # float32 + cpu if bf16 is unavailable
+  torch_dtype: bfloat16
+  num_samples: 20                   # the Chronos paper's default
+
+judge: {enabled: false}
+
+scoring:
+  tol: 0.05
+  loc_tol: 2
+  # The real pool supplies its own denominator, fixed at build time over the
+  # L_MAX history with the archive-declared period, so it is identical at
+  # every L by construction rather than by recomputation.
+  fixed_mase_denominator: true
+
+analysis:
+  alpha: 0.05
+  min_effect: 0.02
+  min_n_per_cell: 255
+  n_boot: 5000
+  correction: holm
+  confirmatory_contrast: [bare_llm, harness]
+  confirmatory_family: [forecasting]
+  secondary_contrast: [harness, harness_oracle]
+  extra_contrasts:
+    - [bare_llm, bare_features]
+    - [bare_features, harness]
+  framing_variance_threshold: 0.20
+  # C3-3, CLUSTERING. The pool takes ONE WINDOW PER SERIES, so an item is a
+  # distinct physical series and `sample_id` is a defensible primary unit -
+  # it is also the unit every cycle-1 and cycle-2 result was computed under,
+  # which is what keeps the synthetic-vs-real comparison in C3-5 like for
+  # like.
+  #
+  # But 300 windows drawn from 4 archives are not 300 fully independent
+  # observations either: series inside one archive share a sensor network, a
+  # sampling convention and a seasonal structure. Clustering on `dataset_id`
+  # resamples whole archives, so the effective n is 4 and the interval is
+  # very wide.
+  #
+  # Both are reported, neither is substituted for the other, and WHICH IS
+  # PRIMARY IS FIXED HERE, before the run. If the two disagree, the honest
+  # reading is that the result depends on treating four archives as four
+  # observations, and the write-up must say so.
+  cluster_unit: sample_id
+  cluster_unit_sensitivity: [dataset_id]
+
+harness:
+  numeric_final: direct
+  assist_qualitative: true
+
+# Execution only: how many items are sent to the model server at once. Not
+# part of any fingerprint or cache key, and tests/test_parallel.py checks
+# the scored output is the same as with `workers: 1`. Set it to 1 to run
+# one request at a time, as cycle 2 did.
+inference:
+  workers: 8

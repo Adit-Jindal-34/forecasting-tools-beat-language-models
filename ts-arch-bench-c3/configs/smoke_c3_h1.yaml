@@ -1,0 +1,70 @@
+# SMOKE TEST for the cycle-3 real-data path. MOCK BACKBONE - NOT A RESULT.
+#
+# Exercises everything that is new in C3 end to end without a GPU: the real
+# pool loader, the content-hash check, the pool-supplied MASE denominator,
+# the `dataset_id` / `stratum` shard columns, the clustered confirmatory
+# path and the clustering-sensitivity report.
+#
+# ⚠ `MockLLM` reads `src.ground_truth` to synthesise answers at a target
+# accuracy, so every number this produces validates PLUMBING ONLY. The
+# runners print a loud banner saying so; do not quote anything from here.
+#
+#   python -m runners.h1_history_length --config configs/smoke_c3_h1.yaml
+seed: 20261114
+out_dir: results/smoke_c3_h1
+
+data:
+  name: real
+  design: c2
+  pool_dir: data-real/pool_clean_n300
+  pool_sha256: 5e7fade71450e8ae1aacd183edfc8fd9218694a6c9509bb295730d3ae2df6538
+  max_history: 512
+  horizon: 24
+
+history_lengths: [32, 128, 512]
+
+query_types:
+  - {name: forecasting, kind: forecast}
+
+backbones:
+  mock_mid:
+    provider: mock
+    model: mock-llm
+    strength: 0.6
+
+systems:
+  - {name: bare_llm,       kind: bare_llm,     backbone: mock_mid}
+  - {name: bare_features,  kind: bare_llm,     backbone: mock_mid, params: {features: true}}
+  - {name: harness,        kind: harness_tsfm, backbone: mock_mid, routing: self}
+  - {name: harness_oracle, kind: harness_tsfm, backbone: mock_mid, routing: oracle}
+
+tsfm: {name: mock_tsfm, noise: 0.05}
+
+judge: {enabled: false}
+
+scoring:
+  tol: 0.05
+  loc_tol: 2
+  fixed_mase_denominator: true
+
+analysis:
+  alpha: 0.05
+  min_effect: 0.02
+  min_n_per_cell: 50
+  # Small, because this run exists to prove the wiring, not to measure.
+  n_boot: 200
+  correction: holm
+  confirmatory_contrast: [bare_llm, harness]
+  confirmatory_family: [forecasting]
+  secondary_contrast: [harness, harness_oracle]
+  extra_contrasts:
+    - [bare_llm, bare_features]
+    - [bare_features, harness]
+  framing_variance_threshold: 0.20
+  reference_L: 128
+  cluster_unit: sample_id
+  cluster_unit_sensitivity: [dataset_id]
+
+harness:
+  numeric_final: direct
+  assist_qualitative: true

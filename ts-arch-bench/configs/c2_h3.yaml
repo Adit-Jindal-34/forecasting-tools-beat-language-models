@@ -1,0 +1,146 @@
+# CYCLE 2 - H3, backbone strength. PREREGISTRATION_C2.md §3 (H3-C2).
+#
+# L=128, nine query types, FOUR arms, the seven-rung Qwen2.5 ladder.
+# Confirmatory contrast: gap(3B) - gap(72B); positive = the gap SHRINKS with
+# strength. Each arm's own change between those rungs is printed beside it.
+#
+#   slurm/submit.sh slurm/h3.sbatch c2 --array=0-6 \
+#       --export=ALL,TSARCH_H3_CONFIG=configs/c2_h3.yaml
+seed: 20261111
+out_dir: results/c2_h3
+
+# The C2 data block. BYTE-IDENTICAL in c2_h2 and c2_h3, so both draw from
+# ONE frozen pool (data/c2_n100) and a shared --cache-dir hits. H1 has its
+# own larger pool (configs/c2_h1.yaml, amendment A15).
+# `design: c2` selects the factorial generator whose record is the
+# qualitative answer key (PREREGISTRATION_C2.md, amendment A9). The cycle-1
+# `patterns` key is not used by that generator.
+data:
+  name: synthetic
+  design: c2
+  pool_dir: data/c2_n100
+  max_history: 512
+  horizon: 8
+  n_base_series: 100
+  n_per_query_type: 100
+  level_range: [20, 120]
+  event_zone: 128
+
+history_lengths: [128]
+
+query_types:
+  - {name: forecasting,       kind: forecast}
+  - {name: statistics,        kind: numeric_exact}
+  - {name: counting,          kind: numeric_exact}
+  - {name: extremum,          kind: numeric_exact}
+  - {name: change,            kind: numeric_exact}
+  - {name: correlation,       kind: numeric_exact}
+  - {name: localization,      kind: localization}
+  - {name: trend_description, kind: qualitative}
+  - {name: event_explanation, kind: qualitative}
+
+backbones:
+  qwen2_5_0_5b:
+    provider: openai_compatible
+    model: Qwen/Qwen2.5-0.5B-Instruct
+    strength: 0.150
+    params: &vllm
+      base_url: http://127.0.0.1:8000/v1
+      api_key: none
+      temperature: 0.0
+      max_tokens: 1024
+  qwen2_5_1_5b:
+    provider: openai_compatible
+    model: Qwen/Qwen2.5-1.5B-Instruct
+    strength: 0.324
+    params: *vllm
+  qwen2_5_3b:
+    provider: openai_compatible
+    model: Qwen/Qwen2.5-3B-Instruct
+    strength: 0.437
+    params: *vllm
+  qwen2_5_7b:
+    provider: openai_compatible
+    model: Qwen/Qwen2.5-7B-Instruct
+    strength: 0.563
+    params: *vllm
+  qwen2_5_14b:
+    provider: openai_compatible
+    model: Qwen/Qwen2.5-14B-Instruct
+    strength: 0.637
+    params: *vllm
+  qwen2_5_32b:
+    provider: openai_compatible
+    model: Qwen/Qwen2.5-32B-Instruct
+    strength: 0.690
+    params: *vllm
+  qwen2_5_72b:
+    provider: openai_compatible
+    model: Qwen/Qwen2.5-72B-Instruct
+    strength: 0.711
+    params: *vllm
+
+# FOUR arms. `bare_features` (C2-5) sees the series plus the same numeric
+# evidence block as the harness's model, with no routing: it separates
+# "does the computation help" from "does the scaffolding help".
+systems:
+  - {name: bare_llm,       kind: bare_llm,     backbone: qwen2_5_0_5b}
+  - {name: bare_features,  kind: bare_llm,     backbone: qwen2_5_0_5b, params: {features: true}}
+  - {name: harness,        kind: harness_tsfm, backbone: qwen2_5_0_5b, routing: self}
+  - {name: harness_oracle, kind: harness_tsfm, backbone: qwen2_5_0_5b, routing: oracle}
+
+tsfm:
+  name: chronos
+  model_id: amazon/chronos-t5-small
+  device_map: cuda                  # float32 + cpu if bf16 is unavailable
+  torch_dtype: bfloat16
+  num_samples: 20                   # the Chronos paper's default
+
+judge: {enabled: false}
+
+scoring:
+  tol: 0.05
+  loc_tol: 2
+  fixed_mase_denominator: true
+
+analysis:
+  alpha: 0.05
+  min_effect: 0.02
+  min_n_per_cell: 85
+  n_boot: 5000
+  correction: holm
+  confirmatory_contrast: [bare_llm, harness]
+  # DECLARED family. A qualitative cell leaves it if the best constant
+  # answer scores at least as high as both arms (C2-7); m is what survives.
+  confirmatory_family: [forecasting, trend_description, event_explanation]
+  secondary_contrast: [harness, harness_oracle]
+  # Declared secondary contrasts, effects and CIs only, outside the
+  # correction: [lower arm, higher arm].
+  extra_contrasts:
+    - [bare_llm, bare_features]
+    - [bare_features, harness]
+  framing_variance_threshold: 0.20
+
+  # weakest -> strongest; every rung is run and plotted.
+  ladder: [qwen2_5_0_5b, qwen2_5_1_5b, qwen2_5_3b, qwen2_5_7b, qwen2_5_14b, qwen2_5_32b, qwen2_5_72b]
+  robustness_backbones: []
+  # H3-C2: the confirmatory contrast is 3B vs 72B, DECLARED HERE before any
+  # C2 run. Cycle 1 showed the 0.5B rung cannot operate the harness at all,
+  # so a contrast anchored there measures routing collapse.
+  did_endpoints: [qwen2_5_3b, qwen2_5_72b]
+  strength_metric: "MMLU-Pro, accuracy / 100 (vendor self-reported)"
+  strength_source: "https://qwenlm.github.io/blog/qwen2.5-llm/ (Qwen2.5-*-Instruct tables)"
+  strength_retrieved: "2026-11-06"
+  strength_alt_metric: "MMLU-redux, accuracy / 100 (Qwen self-reported)"
+  strength_alt:
+    qwen2_5_0_5b: 0.241
+    qwen2_5_1_5b: 0.507
+    qwen2_5_3b: 0.644
+    qwen2_5_7b: 0.754
+    qwen2_5_14b: 0.8
+    qwen2_5_32b: 0.839
+    qwen2_5_72b: 0.868
+
+harness:
+  numeric_final: direct
+  assist_qualitative: true

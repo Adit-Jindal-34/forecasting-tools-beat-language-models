@@ -1,0 +1,176 @@
+{
+ "built": "2026-11-14",
+ "purpose": "Real-data forecasting pool for the H1/H3 forecasting cell (cycle 3).",
+ "archive": {
+  "name": "Monash Time Series Forecasting Archive",
+  "site": "https://forecastingdata.org/",
+  "paper": "Godahewa, Bergmeir, Webb, Hyndman, Montero-Manso (2021), Monash Time Series Forecasting Archive, NeurIPS Datasets and Benchmarks. arXiv:2105.06643",
+  "license": "CC BY 4.0",
+  "attribution_required": true
+ },
+ "datasets": [
+  {
+   "key": "m4_hourly",
+   "zenodo_record": 4656589,
+   "file": "m4_hourly_dataset.tsf",
+   "sha256_zip16": "18085bd3c34e41cd",
+   "license": "cc-by-4.0",
+   "n_series": 414,
+   "frequency": "hourly",
+   "declared_period": 24,
+   "archive_horizon": 48,
+   "len_min": 748,
+   "len_max": 1008,
+   "cite": "Makridakis, Spiliotis, Assimakopoulos (2020), The M4 competition: 100,000 time series and 61 forecasting methods, International Journal of Forecasting",
+   "chronos_split": "Benchmark I",
+   "chronos_split_evidence": "IN the Chronos training corpus. arXiv:2403.07815 Table 2 lists 'M4 (Hourly)' under in-domain evaluation with 414 series of length 748-1008, which matches this file exactly. CORRECTED 2026-11-14: this entry previously read UNVERIFIED."
+  },
+  {
+   "key": "nn5_daily",
+   "zenodo_record": 4656117,
+   "file": "nn5_daily_dataset_without_missing_values.tsf",
+   "sha256_zip16": "14d504384a97f773",
+   "license": "cc-by-4.0",
+   "n_series": 111,
+   "frequency": "daily",
+   "declared_period": 7,
+   "archive_horizon": 56,
+   "len_min": 791,
+   "len_max": 791,
+   "cite": "Ben Taieb, Bontempi, Atiya, Sorjamaa (2012), A review and comparison of strategies for multi-step ahead time series forecasting based on the NN5 forecasting competition, Expert Systems with Applications",
+   "chronos_split": "Benchmark II",
+   "chronos_split_evidence": "NOT in the Chronos training corpus. Table 2 lists 'NN5 (Daily)' under zero-shot evaluation with 111 series of length 791, matching this file exactly. CORRECTED 2026-11-14: previously read UNVERIFIED."
+  },
+  {
+   "key": "electricity_hourly",
+   "zenodo_record": 4656140,
+   "file": "electricity_hourly_dataset.tsf",
+   "sha256_zip16": "eff447075dde68dc",
+   "license": "cc-by-4.0",
+   "n_series": 321,
+   "frequency": "hourly",
+   "declared_period": 24,
+   "archive_horizon": null,
+   "len_min": 26304,
+   "len_max": 26304,
+   "cite": "UCI Machine Learning Repository, ElectricityLoadDiagrams20112014, via the Monash archive",
+   "chronos_split": "Benchmark I",
+   "chronos_split_evidence": "IN the Chronos training corpus. Table 2 lists 'Electricity (Hourly)' under in-domain evaluation with 321 series of length 26304, matching this file exactly. CORRECTED 2026-11-14: previously read LIKELY."
+  },
+  {
+   "key": "traffic_hourly",
+   "zenodo_record": 4656132,
+   "file": "traffic_hourly_dataset.tsf",
+   "sha256_zip16": "3db12ba866a9c9d3",
+   "license": "cc-by-4.0",
+   "n_series": 862,
+   "frequency": "hourly",
+   "declared_period": 24,
+   "archive_horizon": null,
+   "len_min": 17544,
+   "len_max": 17544,
+   "cite": "California Department of Transportation PEMS, via the Monash archive",
+   "chronos_split": "Benchmark II",
+   "chronos_split_evidence": "NOT in the Chronos training corpus. Table 2 lists 'Traffic' under zero-shot evaluation with 862 series of length 17544, matching this file exactly. CORRECTED 2026-11-14: this entry previously read DOCUMENTED OVERLAP, which was a guess made before the tables were read and is wrong."
+  },
+  {
+   "key": "weather",
+   "zenodo_record": 4654822,
+   "file": "weather_dataset.tsf",
+   "sha256_zip16": "adc9195b4b842673",
+   "license": "cc-by-4.0",
+   "n_series": 3010,
+   "frequency": "daily",
+   "declared_period": 7,
+   "archive_horizon": 30,
+   "len_min": 1332,
+   "len_max": 65981,
+   "cite": "Godahewa et al. (2021), Monash Time Series Forecasting Archive; sourced from Australian weather stations",
+   "chronos_split": "Benchmark II",
+   "chronos_split_evidence": "Table 2 lists 'Weather' under zero-shot evaluation with 3010 series of length 1332-65981, matching this file.",
+   "added": "2026-11-14 (cycle 3): the only source of weak-seasonality series long enough for the L=512 geometry."
+  },
+  {
+   "key": "fred_md",
+   "zenodo_record": 4654833,
+   "file": "fred_md_dataset.tsf",
+   "sha256_zip16": "305c0edd2b5e9715",
+   "license": "cc-by-4.0",
+   "n_series": 107,
+   "frequency": "monthly",
+   "declared_period": 12,
+   "archive_horizon": 12,
+   "len_min": 728,
+   "len_max": 728,
+   "cite": "McCracken & Ng (2016), FRED-MD: A Monthly Database for Macroeconomic Research, Journal of Business & Economic Statistics; via the Monash archive",
+   "chronos_split": "Benchmark II",
+   "chronos_split_evidence": "Table 2 lists 'FRED-MD' under zero-shot evaluation with 107 series of length 728, matching this file.",
+   "added": "2026-11-14 (cycle 3): monthly economic series, the non-sensor arm."
+  }
+ ],
+ "reproduce": [
+  "python data-real/fetch.py           # re-download from Zenodo, verify sha256",
+  "python data-real/build_pool.py      # rebuild pool_real_n300   (seed 20261114)",
+  "python data-real/build_pool_c3.py   # rebuild pool_clean_n300 + pool_h2_strata_n240",
+  "python data-real/verify_pool.py     # baseline/headroom/strata diagnostics"
+ ],
+ "pools": [
+  {
+   "path": "pool_real_n300",
+   "n_items": 300,
+   "seed": 20261114,
+   "datasets": [
+    "m4_hourly",
+    "nn5_daily",
+    "electricity_hourly",
+    "traffic_hourly"
+   ],
+   "pool_sha256": "7322149e173d46157dfd068228cdce22a6b0641bcfb02586e106bc569cb26fa2",
+   "built_by": "build_pool.py",
+   "L_MAX": 512,
+   "H_MAX": 48,
+   "chronos_contamination": "MIXED: 2 of 4 datasets (m4_hourly, electricity_hourly) are Benchmark I, i.e. in the Chronos training corpus.",
+   "use": "H1 only. A within-forecaster contrast across L is unharmed by contamination, which hits all five history lengths equally. NOT valid for a cross-arm headline."
+  },
+  {
+   "path": "pool_clean_n300",
+   "n_items": 300,
+   "seed": 20261115,
+   "datasets": [
+    "traffic_hourly",
+    "nn5_daily",
+    "weather",
+    "fred_md"
+   ],
+   "pool_sha256": "5e7fade71450e8ae1aacd183edfc8fd9218694a6c9509bb295730d3ae2df6538",
+   "built_by": "build_pool_c3.py",
+   "L_MAX": 512,
+   "H_MAX": 48,
+   "chronos_contamination": "CONTROLLED for Chronos: every dataset is Benchmark II. NOT controlled for the bare LLM arm - these archives are public text.",
+   "use": "H3 and the cross-arm ride-along; any 'the tool beats the LLM' claim."
+  },
+  {
+   "path": "pool_h2_strata_n240",
+   "n_items": 240,
+   "seed": 20261116,
+   "datasets": [
+    "traffic_hourly",
+    "nn5_daily",
+    "weather",
+    "fred_md"
+   ],
+   "pool_sha256": "7d6a2e80d15636bc507734783c3582f14b19e23953ad3cae63ef8b98d263eefc",
+   "built_by": "build_pool_c3.py",
+   "L_MAX": 512,
+   "H_MAX": 48,
+   "chronos_contamination": "CONTROLLED for Chronos: every dataset is Benchmark II.",
+   "use": "the reframed H2 (weak vs strong seasonality) at L=128. Two-sample, not paired: the strata are different series."
+  }
+ ],
+ "chronos_reference": {
+  "paper": "Ansari et al. (2024), Chronos: Learning the Language of Time Series, arXiv:2403.07815",
+  "table": "Table 2, Appendix B - partitions every dataset into pretraining-only / in-domain evaluation (Benchmark I, 15 datasets, used in training) / zero-shot evaluation (Benchmark II, 27 datasets, not used in training)",
+  "verified": "2026-11-14, by matching series count and series length against each .tsf file",
+  "caveat": "This settles contamination for the HARNESS arm (Chronos) only. The bare LLM arm is not controlled: these archives are public text and Qwen2.5 may carry the literal values. Only data published after the backbone's training cutoff would settle that."
+ }
+}

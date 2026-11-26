@@ -1,0 +1,112 @@
+# CYCLE 2 - H2 REPLICATION on openai/gpt-oss-20b  (OpenAI gpt-oss (reasoning)).
+# PREREGISTRATION_C2.md, amendment A16: a robustness replication of
+# H2 on another model, reported per model with its own Holm m=3
+# family and OUTSIDE the main Qwen result. Items, arms, scoring and
+# analysis are copied byte for byte from configs/c2_h2.yaml.
+#
+# Reasoning model: only the final answer is scored (the chain of
+# thought is discarded by models/providers.py::final_answer_text);
+# reasoning effort `medium`; max_tokens 8192 so long
+# reasoning is not cut off. A reply cut off before its answer is
+# scored as unanswered and counted in the coverage column.
+#
+#   bash slurm/submit_c2_extra.sh
+seed: 20261111
+out_dir: results/c2_h2x_gpt_oss_20b
+
+# The C2 data block. BYTE-IDENTICAL in c2_h2 and c2_h3, so both draw from
+# ONE frozen pool (data/c2_n100) and a shared --cache-dir hits. H1 has its
+# own larger pool (configs/c2_h1.yaml, amendment A15).
+# `design: c2` selects the factorial generator whose record is the
+# qualitative answer key (PREREGISTRATION_C2.md, amendment A9). The cycle-1
+# `patterns` key is not used by that generator.
+data:
+  name: synthetic
+  design: c2
+  pool_dir: data/c2_n100
+  max_history: 512
+  horizon: 8
+  n_base_series: 100
+  n_per_query_type: 100
+  level_range: [20, 120]
+  event_zone: 128
+
+history_lengths: [128]
+
+query_types:
+  - {name: forecasting,       kind: forecast}
+  - {name: statistics,        kind: numeric_exact}
+  - {name: counting,          kind: numeric_exact}
+  - {name: extremum,          kind: numeric_exact}
+  - {name: change,            kind: numeric_exact}
+  - {name: correlation,       kind: numeric_exact}
+  - {name: localization,      kind: localization}
+  - {name: trend_description, kind: qualitative}
+  - {name: event_explanation, kind: qualitative}
+
+backbones:
+  gpt_oss_20b:
+    provider: openai_compatible
+    model: openai/gpt-oss-20b
+    strength: 0.5                   # unused: H2 has no strength axis
+    params:
+      base_url: http://127.0.0.1:8000/v1
+      api_key: none
+      temperature: 0.0
+      max_tokens: 8192
+      reasoning_effort: medium
+      timeout_s: 1800
+    # How to SERVE it. Read by slurm/c2_run.sbatch only; not part of
+    # any fingerprint or cache key.
+    serve:
+      max_model_len: 16384
+      extra_args: ""
+
+# FOUR arms. `bare_features` (C2-5) sees the series plus the same numeric
+# evidence block as the harness's model, with no routing: it separates
+# "does the computation help" from "does the scaffolding help".
+systems:
+  - {name: bare_llm,       kind: bare_llm,     backbone: gpt_oss_20b}
+  - {name: bare_features,  kind: bare_llm,     backbone: gpt_oss_20b, params: {features: true}}
+  - {name: harness,        kind: harness_tsfm, backbone: gpt_oss_20b, routing: self}
+  - {name: harness_oracle, kind: harness_tsfm, backbone: gpt_oss_20b, routing: oracle}
+
+tsfm:
+  name: chronos
+  model_id: amazon/chronos-t5-small
+  device_map: cuda                  # float32 + cpu if bf16 is unavailable
+  torch_dtype: bfloat16
+  num_samples: 20                   # the Chronos paper's default
+
+judge: {enabled: false}
+
+scoring:
+  tol: 0.05
+  loc_tol: 2
+  fixed_mase_denominator: true
+
+analysis:
+  alpha: 0.05
+  min_effect: 0.02
+  min_n_per_cell: 85
+  n_boot: 5000
+  correction: holm
+  confirmatory_contrast: [bare_llm, harness]
+  # DECLARED family. A qualitative cell leaves it if the best constant
+  # answer scores at least as high as both arms (C2-7); m is what survives.
+  confirmatory_family: [forecasting, trend_description, event_explanation]
+  secondary_contrast: [harness, harness_oracle]
+  # Declared secondary contrasts, effects and CIs only, outside the
+  # correction: [lower arm, higher arm].
+  extra_contrasts:
+    - [bare_llm, bare_features]
+    - [bare_features, harness]
+  framing_variance_threshold: 0.20
+
+harness:
+  numeric_final: direct
+  assist_qualitative: true
+
+# Execution only (never in a cache key): items answered at once.
+inference:
+  workers: 16

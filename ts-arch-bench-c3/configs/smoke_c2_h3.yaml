@@ -1,0 +1,77 @@
+# CYCLE-2 plumbing check on the MOCK backbone. NO result, NO verdict.
+# The mock reads the series with the computed reference rules, so its
+# numbers validate code paths only; the runner prints a banner.
+seed: 20261111
+out_dir: results/smoke_c2_h3
+
+data:
+  name: synthetic
+  design: c2
+  pool_dir: data/smoke_c2
+  max_history: 256
+  horizon: 8
+  n_base_series: 36
+  n_per_query_type: 36
+  level_range: [20, 120]
+  event_zone: 128
+
+history_lengths: [128]
+
+query_types:
+  - {name: forecasting,       kind: forecast}
+  - {name: statistics,        kind: numeric_exact}
+  - {name: counting,          kind: numeric_exact}
+  - {name: extremum,          kind: numeric_exact}
+  - {name: change,            kind: numeric_exact}
+  - {name: correlation,       kind: numeric_exact}
+  - {name: localization,      kind: localization}
+  - {name: trend_description, kind: qualitative}
+  - {name: event_explanation, kind: qualitative}
+
+backbones:
+  mock_weak:   {provider: mock, model: mock-llm, strength: 0.25}
+  mock_mid:    {provider: mock, model: mock-llm, strength: 0.60}
+  mock_strong: {provider: mock, model: mock-llm, strength: 0.90}
+
+# FOUR arms. `bare_features` (C2-5) sees the series plus the same numeric
+# evidence block as the harness's model, with no routing: it separates
+# "does the computation help" from "does the scaffolding help".
+systems:
+  - {name: bare_llm,       kind: bare_llm,     backbone: mock_weak}
+  - {name: bare_features,  kind: bare_llm,     backbone: mock_weak, params: {features: true}}
+  - {name: harness,        kind: harness_tsfm, backbone: mock_weak, routing: self}
+  - {name: harness_oracle, kind: harness_tsfm, backbone: mock_weak, routing: oracle}
+
+tsfm: {name: mock_tsfm, noise: 0.0}
+mocks: {error_scale: 0.25, prose_rate: 0.15, length_effect: 0.0}
+judge: {enabled: false}
+scoring: {tol: 0.05, loc_tol: 2, fixed_mase_denominator: true}
+
+analysis:
+  alpha: 0.05
+  min_effect: 0.02
+  min_n_per_cell: 10
+  n_boot: 500
+  correction: holm
+  confirmatory_contrast: [bare_llm, harness]
+  # DECLARED family. A qualitative cell leaves it if the best constant
+  # answer scores at least as high as both arms (C2-7); m is what survives.
+  confirmatory_family: [forecasting, trend_description, event_explanation]
+  secondary_contrast: [harness, harness_oracle]
+  # Declared secondary contrasts, effects and CIs only, outside the
+  # correction: [lower arm, higher arm].
+  extra_contrasts:
+    - [bare_llm, bare_features]
+    - [bare_features, harness]
+  framing_variance_threshold: 0.20
+
+  ladder: [mock_weak, mock_mid, mock_strong]
+  robustness_backbones: []
+  did_endpoints: [mock_mid, mock_strong]
+  strength_metric: "MockLLM `strength` parameter (CIRCULAR - mock only)"
+  strength_source: "configs/smoke_c2_h3.yaml"
+  strength_retrieved: "2026-11-10"
+
+harness:
+  numeric_final: direct
+  assist_qualitative: true

@@ -1,0 +1,68 @@
+# Fast pipeline check on the mock backbone. No power, no verdict - this
+# exists to exercise every code path in seconds.
+#
+# `prose_rate: 0.15` makes the mock ramble on 15% of classify calls, so the
+# permissive parser and the abstention path are actually executed here. In
+# the old build those paths were never exercised by any test, which is how a
+# dead classifier branch survived to production.
+seed: 20261102
+out_dir: results/smoke_mock
+
+data:
+  name: synthetic
+  pool_dir: data/smoke_mock
+  max_history: 256
+  horizon: 8
+  n_base_series: 14
+  n_per_query_type: 14
+  level_range: [20, 120]
+  patterns: [trend, seasonality, multi_seasonality, noise, spikes, abrupt_change, mixed]
+
+history_lengths: [128]
+
+query_types:
+  - {name: forecasting,       kind: forecast}
+  - {name: statistics,        kind: numeric_exact}
+  - {name: counting,          kind: numeric_exact}
+  - {name: extremum,          kind: numeric_exact}
+  - {name: change,            kind: numeric_exact}
+  - {name: correlation,       kind: numeric_exact}
+  - {name: localization,      kind: localization}
+  - {name: trend_description, kind: qualitative}
+  - {name: event_explanation, kind: qualitative}
+
+backbones:
+  mock_mid:
+    provider: mock
+    model: mock-llm
+    strength: 0.6
+
+systems:
+  - {name: bare_llm,       kind: bare_llm,     backbone: mock_mid}
+  - {name: harness,        kind: harness_tsfm, backbone: mock_mid, routing: self}
+  - {name: harness_oracle, kind: harness_tsfm, backbone: mock_mid, routing: oracle}
+
+tsfm: {name: mock_tsfm, noise: 0.0}
+
+mocks:
+  error_scale: 0.25
+  prose_rate: 0.15
+  length_effect: 0.0
+
+judge: {enabled: false}
+
+scoring:
+  tol: 0.05
+  loc_tol: 2
+  fixed_mase_denominator: true
+
+analysis:
+  alpha: 0.05
+  min_effect: 0.02
+  min_n_per_cell: 10
+  n_boot: 1000
+  correction: holm
+
+harness:
+  numeric_final: direct
+  assist_qualitative: true

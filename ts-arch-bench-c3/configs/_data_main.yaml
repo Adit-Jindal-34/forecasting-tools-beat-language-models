@@ -1,0 +1,38 @@
+# REFERENCE ONLY - not loadable on its own.
+#
+# This is the data block that h1/h2/h3 each copy VERBATIM. It is duplicated
+# rather than included because `load_config` has no include mechanism and
+# adding one would change the validated schema.
+#
+# Keeping it byte-identical across the three configs is what makes
+# `data_fingerprint()` identical, which in turn means:
+#
+#   * all three hypotheses draw from ONE frozen pool (data/main_n100), so the
+#     same item id means the same series everywhere;
+#   * a shared --cache-dir actually hits, because the call key is
+#     (backbone fingerprint, PROMPT_VERSION, prompts) and the prompts are
+#     then identical for the same (backbone, L, item).
+#
+# If you edit this block, edit all three and regenerate the pool. A pool
+# mismatch between hypotheses silently breaks the paired design: H1's item
+# b0007-counting-003 would no longer be H3's.
+data:
+  name: synthetic
+  pool_dir: data/main_n100
+  max_history: 512
+  horizon: 8
+  n_base_series: 100
+  n_per_query_type: 100
+  level_range: [20, 120]
+  patterns: [trend, seasonality, multi_seasonality, noise, spikes, abrupt_change, mixed]
+
+query_types:
+  - {name: forecasting,       kind: forecast}
+  - {name: statistics,        kind: numeric_exact}
+  - {name: counting,          kind: numeric_exact}
+  - {name: extremum,          kind: numeric_exact}
+  - {name: change,            kind: numeric_exact}
+  - {name: correlation,       kind: numeric_exact}
+  - {name: localization,      kind: localization}
+  - {name: trend_description, kind: qualitative}
+  - {name: event_explanation, kind: qualitative}

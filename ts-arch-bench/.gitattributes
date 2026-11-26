@@ -1,0 +1,29 @@
+# Shell scripts and SLURM batch files MUST be LF, always.
+#
+# This file exists because of a real failure. On Windows, git's autocrlf
+# converted slurm/*.sh to CRLF in the working tree. Uploaded to the Linux
+# cluster, `set -euo pipefail` became `pipefail\r`, and bash reported:
+#
+#     slurm/setup_env.sh: line 24: set: pipefail: invalid option name
+#
+# which names neither the line endings nor the file's origin. Every script
+# would have failed the same way, in a different place each time.
+*.sh            text eol=lf
+*.sbatch        text eol=lf
+*.bash          text eol=lf
+
+# Python is run on both sides; LF everywhere keeps diffs clean and avoids
+# the same class of surprise in any file with a shebang.
+*.py            text eol=lf
+
+# Data and docs: normalise on commit, let the platform decide on checkout.
+*.yaml          text
+*.yml           text
+*.md            text
+*.json          text
+*.csv           text
+
+# Binary: never touch.
+*.npz           binary
+*.zip           binary
+*.png           binary

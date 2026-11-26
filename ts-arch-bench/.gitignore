@@ -1,0 +1,17 @@
+# virtualenvs
+.venv*/
+# generated data pools and results
+data/
+results/
+# caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.pytest_tmp/
+# editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+# archives
+*.zip

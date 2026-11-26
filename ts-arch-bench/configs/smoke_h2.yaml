@@ -1,0 +1,59 @@
+# H2 plumbing check on the mock backbone. NO result, NO verdict.
+#
+# MockLLM reads src.ground_truth to synthesise answers at a target accuracy.
+# Every number this produces validates code paths only; the runner prints a
+# banner saying so. prose_rate 0.15 makes the mock ramble on 15% of classify
+# calls so the permissive parser and the abstention path actually execute.
+seed: 20261102
+out_dir: results/smoke_h2
+
+data:
+  name: synthetic
+  pool_dir: data/smoke_runners
+  max_history: 256
+  horizon: 8
+  n_base_series: 14
+  n_per_query_type: 14
+  level_range: [20, 120]
+  patterns: [trend, seasonality, multi_seasonality, noise, spikes, abrupt_change, mixed]
+
+history_lengths: [128]
+
+query_types:
+  - {name: forecasting,       kind: forecast}
+  - {name: statistics,        kind: numeric_exact}
+  - {name: counting,          kind: numeric_exact}
+  - {name: extremum,          kind: numeric_exact}
+  - {name: change,            kind: numeric_exact}
+  - {name: correlation,       kind: numeric_exact}
+  - {name: localization,      kind: localization}
+  - {name: trend_description, kind: qualitative}
+  - {name: event_explanation, kind: qualitative}
+
+backbones:
+  mock_mid: {provider: mock, model: mock-llm, strength: 0.6}
+
+systems:
+  - {name: bare_llm,       kind: bare_llm,     backbone: mock_mid}
+  - {name: harness,        kind: harness_tsfm, backbone: mock_mid, routing: self}
+  - {name: harness_oracle, kind: harness_tsfm, backbone: mock_mid, routing: oracle}
+
+tsfm: {name: mock_tsfm, noise: 0.0}
+mocks: {error_scale: 0.25, prose_rate: 0.15, length_effect: 0.0}
+judge: {enabled: false}
+scoring: {tol: 0.05, loc_tol: 2, fixed_mase_denominator: true}
+
+analysis:
+  alpha: 0.05
+  min_effect: 0.02
+  min_n_per_cell: 10
+  n_boot: 500
+  correction: holm
+  confirmatory_contrast: [bare_llm, harness]
+  # D6: exactly the non-saturated cells. Saturated cells' gaps are
+  # redundant with route_correct + the oracle ablation (PREREG §3).
+  confirmatory_family: [forecasting, trend_description, event_explanation]
+  secondary_contrast: [harness, harness_oracle]
+  framing_variance_threshold: 0.20
+
+harness: {numeric_final: direct, assist_qualitative: true}

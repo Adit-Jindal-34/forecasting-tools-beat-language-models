@@ -1,0 +1,27 @@
+# secrets and local environment
+env.sh
+.env
+*.key
+
+# cluster run artefacts
+logs/
+vllm_*.log
+slurm-*.out
+
+# cached per-item results (regenerate by rerunning the pipeline)
+**/raw_results.csv
+**/shards/
+
+# model and package caches
+hf/
+conda/
+vllm/
+torch/
+triton/
+pip/
+
+# python
+__pycache__/
+*.pyc
+.pytest_cache/
+.pytest_tmp/

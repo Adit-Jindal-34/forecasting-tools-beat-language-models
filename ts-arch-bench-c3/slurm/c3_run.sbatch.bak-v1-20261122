@@ -1,0 +1,264 @@
+#!/usr/bin/env bash
+# JOB NAME: supplied by slurm/submit_c3_bundled.sh via --job-name, which
+# overrides the placeholder below. Sharanga and CSIS kill any job not named
+#     name_bitsid_project[_anything]
+# so the placeholder is INVALID ON PURPOSE: a bare `sbatch` on this file must
+# fail visibly. Submit with:
+#
+#     bash slurm/submit_c3_bundled.sh
+#
+#SBATCH --job-name=INVALID-use-slurm-submit-c3-bundled-sh
+#SBATCH --partition=gpu_h200_8
+#SBATCH --gres=gpu:1
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=90G
+#SBATCH --time=02:00:00
+#SBATCH --output=logs/c3_%x_%j.out
+#SBATCH --error=logs/c3_%x_%j.out
+#SBATCH --requeue
+#
+# CYCLE 3, ONE JOB = SEVERAL STEPS ON ONE ALLOCATION. The same machinery as
+# slurm/c2_run.sbatch (read its header), with three differences:
+#
+#  1. It runs from the folder it was SUBMITTED from (TSARCH_CODE, set by
+#     submit_c3_bundled.sh), not from $TSARCH/ts-arch-bench. Cycle 3 lives in
+#     its own folder on the cluster so the cycle-2 code - including the
+#     gpt-oss runs - stays exactly as it was.
+#  2. Locks are $TSARCH/locks/c3_<tag>.lock and caches $TSARCH/cache/c3_<tag>,
+#     so nothing is shared with a cycle-2 job.
+#  3. No forecast seeding: cycle 3 is a new pool, and models/tsfm.py seeds
+#     every Chronos call from the series content, so a recomputed forecast
+#     is the same draw.
+#
+#   TSARCH_C3_STEPS   steps joined by '+', run in order:
+#                       h3:<backbone>  one H3 rung, c3_h3_clean.yaml (inference)
+#                       h1             H1, clean pool, all L, + analysis
+#                       h1c            H1, contaminated pool, all L, + analysis
+#                       h2             H2 reframed (series character) + analysis
+#                       h8             horizon-8 sensitivity + analysis
+#
+# h1 after h3:qwen2_5_32b in the SAME job (same cache) replays the L=128 cell
+# for free: the two configs declare a byte-identical data block.
+#
+# A failed step does not stop the later ones; the job exits non-zero at the
+# end if any step failed, and re-submitting resumes (finished shards are
+# skipped, finished calls are cached).
+set -uo pipefail
+
+source "/scratch/$USER/claude-ts-arch-bench/env.sh"
+cd "${TSARCH_CODE:?set by slurm/submit_c3_bundled.sh}"
+mkdir -p logs
+
+source slurm/jobname.sh
+tsarch_assert_jobname || exit 1
+
+STEPS="${TSARCH_C3_STEPS:?set TSARCH_C3_STEPS, e.g. 'h3:qwen2_5_32b+h1'}"
+STEPS="${STEPS//+/ }"
+
+# ---- siblings and the per-unit lock (see c2_run.sbatch) --------------------
+TAG="${TSARCH_C3_TAG:-}"
+LOCK=""
+if [[ -n "$TAG" ]]; then
+  mkdir -p "$TSARCH/locks"
+  LOCK="$TSARCH/locks/c3_$TAG.lock"
+  if ! mkdir "$LOCK" 2>/dev/null; then
+    owner="$(cat "$LOCK/jobid" 2>/dev/null || true)"
+    if [[ -e "$LOCK/done" ]]; then
+      echo "[c3] unit '$TAG' already finished (job ${owner:-?}). Nothing to do."
+      exit 0
+    fi
+    owner_state=""
+    if [[ -n "$owner" && "$owner" != "${SLURM_JOB_ID:-}" ]]; then
+      owner_state="$(squeue -h -j "$owner" -t RUNNING,COMPLETING -o %T \
+                     2>/dev/null || true)"
+    fi
+    if [[ -n "$owner_state" ]]; then
+      echo "[c3] unit '$TAG' is being run by sibling job $owner. Nothing to do."
+      exit 0
+    fi
+    echo "[c3] stale lock from job ${owner:-?} (not running); taking over"
+    rm -rf "$LOCK"
+    mkdir "$LOCK" 2>/dev/null || { echo "[c3] lost the race for the lock"; exit 0; }
+  fi
+  echo "${SLURM_JOB_ID:-local}" > "$LOCK/jobid"
+  if [[ -n "${SLURM_JOB_NAME:-}" ]]; then
+    scancel --user="$USER" --name="$SLURM_JOB_NAME" --state=PENDING \
+      2>/dev/null && echo "[c3] cancelled pending siblings of $SLURM_JOB_NAME" \
+      || echo "[c3] could not cancel siblings (they will exit on the lock)"
+  fi
+fi
+
+CACHE="${TSARCH_C3_CACHE:?set by slurm/submit_c3_bundled.sh}"
+mkdir -p "$CACHE"
+echo "code : $(pwd)"
+echo "cache: $CACHE"
+
+H3_CFG=configs/c3_h3_clean.yaml
+H1_CFG=configs/c3_h1_clean.yaml
+H1C_CFG=configs/c3_h1_contaminated.yaml
+H2_CFG=configs/c3_h2_strata.yaml
+H8_CFG=configs/c3_sensitivity_h8.yaml
+
+echo "=== c3_run  job ${SLURM_JOB_ID:-local}  node $(hostname)  $(date -Is) ==="
+echo "steps: $STEPS"
+nvidia-smi --query-gpu=index,name,memory.total,memory.used --format=csv,noheader || true
+
+# ---- GPU health gate (added 2026-11-21) -----------------------------------
+# gpunode7 holds at least one H200 that throws uncorrectable ECC errors and
+# has begun refusing to open a CUDA context at all. Jobs 450418, 461886 and
+# 462931 all died on it after 51, 30 and 4 minutes - every time AFTER paying
+# 26-40 minutes to load the 72B weights. So look at the cards BEFORE loading
+# anything: a bad allocation then costs a minute instead of an hour, and the
+# requeued job may land on healthy GPUs. The node has 8.
+#
+# A card is condemned only on POSITIVE evidence: a parseable nonzero
+# uncorrectable-ECC count, or a CUDA context that will not open. "N/A" is
+# unknown and passes, so a driver that does not report ECC cannot trap the
+# job in a requeue loop. SLURM_RESTART_COUNT caps the retries.
+gpu_gate_bad_reason() {   # prints the reason and returns 0 when a GPU is bad
+  local idx uuid ecc
+  while IFS=, read -r idx uuid ecc; do
+    [[ -z "${idx:-}" ]] && continue
+    ecc="${ecc// /}"
+    echo "[gpu-check] gpu${idx}${uuid} uncorrectable=${ecc:-?}" >&2
+    if [[ "$ecc" =~ ^[0-9]+$ ]] && (( ecc > 0 )); then
+      echo "gpu${idx}${uuid} reports ${ecc} uncorrectable ECC error(s)"
+      return 0
+    fi
+  done < <(nvidia-smi \
+             --query-gpu=index,uuid,ecc.errors.uncorrected.volatile.total \
+             --format=csv,noheader 2>/dev/null)
+
+  python - <<'PYGATE' >/dev/null 2>&1 && return 1
+import torch
+n = torch.cuda.device_count()
+assert n >= 1, "no CUDA device visible"
+for i in range(n):
+    torch.zeros(1024, device="cuda:%d" % i).sum().item()
+PYGATE
+  echo "a CUDA context would not open on every allocated GPU"
+  return 0
+}
+
+if GPU_BAD="$(gpu_gate_bad_reason)"; then
+  echo "[c3] GPU HEALTH GATE: $GPU_BAD"
+  gate_tries="${SLURM_RESTART_COUNT:-0}"
+  if [[ -n "${SLURM_JOB_ID:-}" ]] && (( gate_tries < 8 )); then
+    # release the unit lock first, or the requeued job sees it and exits
+    [[ -n "${LOCK:-}" ]] && rm -rf "$LOCK"
+    echo "[c3] requeueing, attempt $((gate_tries + 1)) of 8 - no weights loaded"
+    scontrol requeue "$SLURM_JOB_ID" && sleep 60
+    exit 0
+  fi
+  echo "[c3] bad GPU and no requeue left (or not under Slurm); giving up"
+  [[ -n "${LOCK:-}" ]] && rm -rf "$LOCK"
+  exit 1
+fi
+echo "[gpu-check] allocated GPUs look healthy"
+
+# the pools are declared by hash; refuse to spend GPU time on a mismatch
+python data-real/check_pools.py || { echo "[c3] pool check failed"; exit 1; }
+
+model_of() {   # model_of <config> <backbone> -> HF id
+  python -c "
+import sys; sys.path.insert(0, '.')
+from src.config import load_config
+print(load_config('$1').backbones['$2'].model)"
+}
+
+free_port() {
+  python - <<'PY'
+import os, socket
+start = 8000 + int(os.environ.get("SLURM_JOB_ID", "0")) % 1000
+for port in list(range(start, start + 200)) + list(range(9000, 9200)):
+    with socket.socket() as s:
+        try:
+            s.bind(("127.0.0.1", port))
+        except OSError:
+            continue
+        print(port)
+        break
+PY
+}
+
+SERVING=""
+
+serve() {           # serve <hf-model-id>
+  local model="$1"
+  if [[ "$SERVING" == "$model" && -n "${VLLM_PID:-}" ]] \
+     && kill -0 "$VLLM_PID" 2>/dev/null; then
+    echo "[c3] reusing the running server for $model"
+    return 0
+  fi
+  stop_server
+  local port
+  port="$(free_port)"
+  [[ -n "$port" ]] || { echo "[c3] no free port found"; return 1; }
+  export VLLM_PORT="$port" TSARCH_VLLM_PORT="$port"
+  echo "[c3] serving $model on 127.0.0.1:$port"
+  source slurm/serve_vllm.sh "$model" || return 1
+  [[ -n "${VLLM_PID:-}" ]] && kill -0 "$VLLM_PID" 2>/dev/null \
+    || { echo "[c3] server died"; return 1; }
+  curl -sf "http://127.0.0.1:${port}/v1/models" | grep -q "\"$model\"" \
+    || { echo "[c3] port $port does not serve $model"; vllm_stop || true
+         return 1; }
+  SERVING="$model"
+}
+
+stop_server() {
+  if [[ -n "$SERVING" ]]; then
+    vllm_stop || true
+    SERVING=""
+    sleep 20
+  fi
+}
+vllm_stop() { :; }
+trap 'stop_server' EXIT
+
+run32() {           # run32 <module> <config>  - a qwen2_5_32b run, inference + analysis
+  local model
+  model="$(model_of "$2" qwen2_5_32b)" && serve "$model" && \
+  python -m "$1" --config "$2" --stage both --backbone qwen2_5_32b \
+    --cache-dir "$CACHE"
+}
+
+FAILED=()
+for step in $STEPS; do
+  echo
+  echo "################ step: $step   $(date -Is)"
+  t0=$SECONDS
+  ok=1
+  case "$step" in
+    h3:*)
+      bb="${step#h3:}"
+      model="$(model_of "$H3_CFG" "$bb")" && serve "$model" && \
+      python -m runners.h3_backbone_strength --config "$H3_CFG" \
+        --stage inference --backbone "$bb" --cache-dir "$CACHE" || ok=0
+      ;;
+    h1)  run32 runners.h1_history_length   "$H1_CFG"  || ok=0 ;;
+    h1c) run32 runners.h1_history_length   "$H1C_CFG" || ok=0 ;;
+    h2)  run32 runners.h2_series_character "$H2_CFG"  || ok=0 ;;
+    h8)  run32 runners.h2_query_type       "$H8_CFG"  || ok=0 ;;
+    *)   echo "[c3] unknown step '$step'"; ok=0 ;;
+  esac
+  if (( ok )); then
+    echo "################ step $step OK in $(( SECONDS - t0 ))s"
+  else
+    echo "################ step $step FAILED after $(( SECONDS - t0 ))s"
+    FAILED+=("$step")
+    stop_server
+  fi
+done
+
+stop_server
+echo
+echo "=== c3_run finished $(date -Is) ==="
+if (( ${#FAILED[@]} )); then
+  echo "FAILED steps: ${FAILED[*]}"
+  echo "Re-submit: finished shards are skipped and finished calls replay."
+  [[ -n "$LOCK" ]] && rm -rf "$LOCK"
+  exit 1
+fi
+echo "all steps OK: $STEPS"
+[[ -n "$LOCK" ]] && date -Is > "$LOCK/done"
+exit 0

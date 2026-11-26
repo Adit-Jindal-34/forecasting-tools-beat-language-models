@@ -1,0 +1,100 @@
+# H2 REPLICATION ON A SECOND DATA POOL - robustness, NOT a confirmatory run.
+#
+# Generated from configs/h2_query_type.yaml by changing exactly three keys:
+# `seed`, `data.pool_dir` and `out_dir`. Everything else - query types, arms,
+# backbone, L, scoring, the declared family and m - is identical, because the
+# whole point is to vary the DATA and nothing else.
+#
+# WHY
+# ---
+# H2's 3/3 result rests on a single seed and a single generated pool. That
+# leaves no estimate of how much the three effects move when the data moves,
+# which is the first thing a reviewer asks of a synthetic benchmark. This run
+# answers "do the three wins replicate on fresh series?".
+#
+# STATUS: this is a ROBUSTNESS CHECK reported alongside the pre-registered
+# result, not a replacement for it and not a second bite at the family. The
+# pre-registered H2 verdict is the one from seed 20261102 in
+# results/h2_query_type, and it stands whatever this produces. If the effects
+# do NOT replicate, that is reported as a limitation of the original - it does
+# not license swapping in whichever seed looks better, which is exactly the
+# researcher degree of freedom PREREGISTRATION.md §0 exists to forbid.
+#
+# COST: a new pool means new series, so NO prompt is in the call cache and
+# every call is real GPU work - about 2,100 calls on the 32B, ~25 minutes.
+# Unlike the original H2 (2192 hits, 0 misses) this one cannot be replayed.
+seed: 20261107
+out_dir: results/h2_query_type_seed2
+
+data:
+  name: synthetic
+  pool_dir: data/main_n100_seed2
+  max_history: 512
+  horizon: 8
+  n_base_series: 100
+  n_per_query_type: 100
+  level_range: [20, 120]
+  patterns: [trend, seasonality, multi_seasonality, noise, spikes, abrupt_change, mixed]
+
+history_lengths: [128]
+
+query_types:
+  - {name: forecasting,       kind: forecast}
+  - {name: statistics,        kind: numeric_exact}
+  - {name: counting,          kind: numeric_exact}
+  - {name: extremum,          kind: numeric_exact}
+  - {name: change,            kind: numeric_exact}
+  - {name: correlation,       kind: numeric_exact}
+  - {name: localization,      kind: localization}
+  - {name: trend_description, kind: qualitative}
+  - {name: event_explanation, kind: qualitative}
+
+backbones:
+  qwen2_5_32b:
+    provider: openai_compatible
+    model: Qwen/Qwen2.5-32B-Instruct
+    strength: 0.690                 # MMLU-Pro 69.0; H3's x-axis only
+    params:
+      # ALWAYS the loopback address, never the node hostname. base_url is in
+      # the cache fingerprint, so `gpunode5:8000` and `127.0.0.1:8000` are
+      # different keys and the second run would re-ask every prompt.
+      base_url: http://127.0.0.1:8000/v1
+      api_key: none
+      temperature: 0.0
+      max_tokens: 1024
+
+systems:
+  - {name: bare_llm,       kind: bare_llm,     backbone: qwen2_5_32b}
+  - {name: harness,        kind: harness_tsfm, backbone: qwen2_5_32b, routing: self}
+  - {name: harness_oracle, kind: harness_tsfm, backbone: qwen2_5_32b, routing: oracle}
+
+tsfm:
+  name: chronos
+  model_id: amazon/chronos-t5-small
+  device_map: cuda                  # float32 + cpu on V100 if bf16 is absent
+  torch_dtype: bfloat16
+  num_samples: 20
+
+judge: {enabled: false}             # read evaluation/judge.py before enabling
+
+scoring:
+  tol: 0.05
+  loc_tol: 2
+  fixed_mase_denominator: true
+
+analysis:
+  alpha: 0.05
+  min_effect: 0.02
+  min_n_per_cell: 85
+  n_boot: 5000
+  correction: holm
+  confirmatory_contrast: [bare_llm, harness]
+  # D6: exactly the non-saturated cells. Saturated cells' gaps are
+  # redundant with route_correct + the oracle ablation (PREREG §3).
+  confirmatory_family: [forecasting, trend_description, event_explanation]
+  secondary_contrast: [harness, harness_oracle]
+  framing_variance_threshold: 0.20
+
+harness:
+  numeric_final: direct
+  assist_qualitative: true

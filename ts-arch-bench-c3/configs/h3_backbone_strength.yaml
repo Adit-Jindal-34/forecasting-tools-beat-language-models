@@ -1,0 +1,193 @@
+# H3 - backbone strength. See PREREGISTRATION.md §6, H3.
+#
+# L=128, nine query types, three arms, across a SINGLE-FAMILY ladder
+# (Qwen2.5 0.5B -> 72B). One family is deliberate: mixing families would
+# confound capability with tokenizer and training recipe, and the x-axis is
+# supposed to be capability alone. Llama-3.1 8B/70B run as a cross-family
+# robustness check, reported separately and NOT in the confirmatory family.
+#
+# Confirmatory test is the item-level difference-in-differences between the
+# weakest and strongest rung, m=3. The 7-point Spearman is SHAPE ONLY.
+#
+# ONE ARRAY TASK PER RUNG. Each task loads one model, so a 72B never sits in
+# the same process as a 0.5B:
+#   sbatch --array=0-6 slurm/h3.sbatch
+seed: 20261102
+out_dir: results/h3_backbone_strength
+
+data:
+  name: synthetic
+  pool_dir: data/main_n100
+  max_history: 512
+  horizon: 8
+  n_base_series: 100
+  n_per_query_type: 100
+  level_range: [20, 120]
+  patterns: [trend, seasonality, multi_seasonality, noise, spikes, abrupt_change, mixed]
+
+history_lengths: [128]
+
+query_types:
+  - {name: forecasting,       kind: forecast}
+  - {name: statistics,        kind: numeric_exact}
+  - {name: counting,          kind: numeric_exact}
+  - {name: extremum,          kind: numeric_exact}
+  - {name: change,            kind: numeric_exact}
+  - {name: correlation,       kind: numeric_exact}
+  - {name: localization,      kind: localization}
+  - {name: trend_description, kind: qualitative}
+  - {name: event_explanation, kind: qualitative}
+
+# ---------------------------------------------------------------------------
+# THE LADDER
+#
+# `strength` is MMLU-Pro / 100, vendor self-reported. DECLARED 2026-11-06,
+# before any rung was run (PREREGISTRATION.md §6, H3).
+#
+# WHY MMLU-Pro AND NOT GSM8K OR MATH
+# Of the metrics Qwen reports per size, only MMLU-Pro and MMLU-redux are
+# STRICTLY MONOTONE across the seven rungs. The obvious "numeric reasoning"
+# candidates fail as a rank axis on their own published numbers:
+#
+#   GSM8K : 49.6 73.2 86.7 91.6 94.8 95.9 95.8  <- 32B BEATS 72B, and the
+#           top four rungs span 4.3 points over a 10x parameter range
+#   MATH  : 34.4 55.2 65.9 75.5 80.0 83.1 83.1  <- ties at the top
+#   GPQA  : 29.8 29.8 30.3 36.4 45.5 49.5 49.0  <- ties at the bottom, drops
+#
+# A non-monotone x-axis would put the ladder in an order its own vendor's
+# numbers contradict. MMLU-Pro is monotone AND has the widest dynamic range
+# (15.0 -> 71.1, 56 points), so it discriminates across the whole ladder
+# rather than compressing at one end.
+#
+# `strength` enters ONE place: the descriptive Spearman. The confirmatory
+# DiD takes the ends of the declared `ladder:` list below, so these numbers
+# cannot move the headline test - only the curve. `ladder()` warns if the
+# declared order and the strength order ever disagree.
+# ---------------------------------------------------------------------------
+backbones:
+  qwen2_5_0_5b:
+    provider: openai_compatible
+    model: Qwen/Qwen2.5-0.5B-Instruct
+    strength: 0.150               # MMLU-Pro 15.0
+    params: &vllm
+      base_url: http://127.0.0.1:8000/v1
+      api_key: none
+      temperature: 0.0
+      max_tokens: 1024
+  qwen2_5_1_5b:
+    provider: openai_compatible
+    model: Qwen/Qwen2.5-1.5B-Instruct
+    strength: 0.324               # MMLU-Pro 32.4
+    params: *vllm
+  qwen2_5_3b:
+    provider: openai_compatible
+    model: Qwen/Qwen2.5-3B-Instruct
+    strength: 0.437               # MMLU-Pro 43.7
+    params: *vllm
+  qwen2_5_7b:
+    provider: openai_compatible
+    model: Qwen/Qwen2.5-7B-Instruct
+    strength: 0.563               # MMLU-Pro 56.3
+    params: *vllm
+  qwen2_5_14b:
+    provider: openai_compatible
+    model: Qwen/Qwen2.5-14B-Instruct
+    strength: 0.637               # MMLU-Pro 63.7
+    params: *vllm
+  qwen2_5_32b:
+    provider: openai_compatible
+    model: Qwen/Qwen2.5-32B-Instruct
+    strength: 0.690               # MMLU-Pro 69.0
+    params: *vllm
+  qwen2_5_72b:
+    provider: openai_compatible
+    model: Qwen/Qwen2.5-72B-Instruct
+    strength: 0.711               # MMLU-Pro 71.1
+    params: *vllm
+  # cross-family robustness check, outside the confirmatory family
+  llama3_1_8b:
+    provider: openai_compatible
+    model: meta-llama/Llama-3.1-8B-Instruct
+    strength: 0.483               # MMLU-Pro 48.3, Meta card
+    params: *vllm
+  llama3_1_70b:
+    provider: openai_compatible
+    model: meta-llama/Llama-3.1-70B-Instruct
+    strength: 0.664               # MMLU-Pro 66.4, Meta card
+    params: *vllm
+
+# System names stay constant across rungs; `narrow_config` rewrites the
+# backbone per process. The `backbone` COLUMN on every row records which
+# model produced it, which is what the analysis pairs on.
+systems:
+  - {name: bare_llm,       kind: bare_llm,     backbone: qwen2_5_0_5b}
+  - {name: harness,        kind: harness_tsfm, backbone: qwen2_5_0_5b, routing: self}
+  - {name: harness_oracle, kind: harness_tsfm, backbone: qwen2_5_0_5b, routing: oracle}
+
+tsfm:
+  name: chronos
+  model_id: amazon/chronos-t5-small
+  device_map: cuda
+  torch_dtype: bfloat16
+  num_samples: 20
+
+judge: {enabled: false}
+
+scoring:
+  tol: 0.05
+  loc_tol: 2
+  fixed_mase_denominator: true
+
+analysis:
+  alpha: 0.05
+  min_effect: 0.02
+  min_n_per_cell: 85
+  n_boot: 5000
+  correction: holm
+  confirmatory_contrast: [bare_llm, harness]
+  # D6: exactly the non-saturated cells. Saturated cells' gaps are
+  # redundant with route_correct + the oracle ablation (PREREG §3).
+  confirmatory_family: [forecasting, trend_description, event_explanation]
+  secondary_contrast: [harness, harness_oracle]
+  framing_variance_threshold: 0.20
+
+  # weakest -> strongest. The DiD takes the two ends of THIS list.
+  ladder: [qwen2_5_0_5b, qwen2_5_1_5b, qwen2_5_3b, qwen2_5_7b,
+           qwen2_5_14b, qwen2_5_32b, qwen2_5_72b]
+  # EMPTIED 2026-11-07 - §5 deviation D9, POST-HOC. Was
+  # [llama3_1_8b, llama3_1_70b]. Both are gated on Hugging Face and no
+  # token was available on hpc01, so neither rung ever ran; with them
+  # declared here, `load_shards` correctly refused the whole grid and H3
+  # produced NO verdict at all despite all seven Qwen rungs being complete.
+  #
+  # Dropping them costs the cross-family robustness check and nothing in the
+  # confirmatory claim: this axis is secondary by construction and the DiD
+  # takes the two ends of `ladder`, which are untouched. The backbone
+  # DEFINITIONS are deliberately left in place above, with their HF ids and
+  # MMLU-Pro figures, so restoring this axis later is a one-line change and
+  # the declared strengths cannot drift in the meantime.
+  robustness_backbones: []
+
+  # DECLARED 2026-11-06, before the first rung ran. Changing any of these
+  # after seeing results is a §5 protocol deviation.
+  strength_metric: "MMLU-Pro, accuracy / 100 (vendor self-reported)"
+  strength_source: "Qwen rungs: https://qwenlm.github.io/blog/qwen2.5-llm/ (Qwen2.5-*-Instruct tables). Llama robustness pair: https://huggingface.co/meta-llama/Llama-3.1-8B-Instruct, row 'MMLU-Pro (CoT)' 5-shot micro_avg/acc_char."
+  strength_retrieved: "2026-11-06"
+
+  # Pre-registered SECONDARY axis, declared now so it is not chosen later.
+  # Also strictly monotone; reported as a robustness re-plot of the curve.
+  # Qwen only - Meta's card does not report MMLU-redux, which is itself a
+  # reason the cross-family pair stays outside the confirmatory family.
+  strength_alt_metric: "MMLU-redux, accuracy / 100 (Qwen self-reported)"
+  strength_alt:
+    qwen2_5_0_5b: 0.241
+    qwen2_5_1_5b: 0.507
+    qwen2_5_3b:   0.644
+    qwen2_5_7b:   0.754
+    qwen2_5_14b:  0.800
+    qwen2_5_32b:  0.839
+    qwen2_5_72b:  0.868
+
+harness:
+  numeric_final: direct
+  assist_qualitative: true

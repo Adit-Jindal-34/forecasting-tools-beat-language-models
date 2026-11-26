@@ -1,0 +1,122 @@
+# CYCLE 2 - H1, history length. PREREGISTRATION_C2.md §3 (H1-C2), A15.
+#
+# One backbone, five history lengths, FOUR arms.
+#
+# H1 HAS ITS OWN POOL (amendment A15): 300 series, and only the three
+# family-type cells. The confirmatory test is a difference-in-differences on
+# `forecasting`, and the forecasting score has a narrow usable range (a
+# near-perfect forecaster gains about +0.08 from L=32 to L=512 on this
+# generator), so 100 items could not have resolved it. At n=300 the paired
+# minimum detectable effect is dz ~ 0.16. The six tool-saturated numeric
+# cells are dropped from H1 ONLY - they are descriptive, they still run in
+# H2 and H3, and dropping them pays for the extra series: about 19,500 calls
+# against 15,500 for nine cells at n=100.
+# Same seed and same generator as H2/H3, but a different pool, so nothing
+# here is a cache replay of H3's L=128 cell.
+#
+# The confirmatory family is `forecasting` ALONE (m = 1). The qualitative
+# key depends on whether window(L) contains the injected event, so a
+# difference-in-differences across L would compare two different questions;
+# those cells are run and reported at every L, descriptively.
+#
+# ALL THREE qualitative slots are fully answerable only from L=128 up.
+# Print the per-L constant baseline beside each descriptive row, and do NOT
+# describe a qualitative cell as improving with L (figures: 360 generated
+# series, A15 generator):
+#   * event (A13): the event is inside the window 57/240 at L=32 and
+#     120/240 at L=64, so the slot is 84% / 67% `no major event` there,
+#     against a flat 33% at L >= 128.
+#   * trend (A14): the drift is 1-3 sd per 128 points, so a 32-point window
+#     holds 0.25-0.75 sd of rise. A fitted-slope t test scores 0.36 at L=32
+#     and 0.44 at L=64 against a 0.33 constant line, 0.66 at L=128 and 0.87
+#     at L=512.
+#   * seasonal (A15): periods are 12, 24, 48. A period-48 cycle is detected
+#     53% of the time at L=32 and 97% from L=64 up.
+# An apparent improvement across L in a qualitative cell is the slot
+# becoming answerable, not the arms getting better. Each arm's own change
+# from L=32 to L=512 is printed beside the DiD, because cycle 1's widening
+# came from the forecaster improving, not the bare arm degrading. Most of
+# the forecasting ceiling's gain is between L=32 and L=64 (+0.07 of +0.08),
+# so read the whole curve, not only its two ends.
+#
+#   slurm/submit.sh slurm/h1_all.sbatch c2h1 \
+#       --export=ALL,TSARCH_H1_CONFIG=configs/c2_h1.yaml
+seed: 20261111
+out_dir: results/c2_h1
+
+# H1's own pool (A15). Same generator and seed as c2_h2 / c2_h3, more series.
+data:
+  name: synthetic
+  design: c2
+  pool_dir: data/c2_h1_n300
+  max_history: 512
+  horizon: 8
+  n_base_series: 300
+  n_per_query_type: 300
+  level_range: [20, 120]
+  event_zone: 128
+
+history_lengths: [32, 64, 128, 256, 512]
+
+# Only the three family-type cells (A15). The six numeric cells run in H2/H3.
+query_types:
+  - {name: forecasting,       kind: forecast}
+  - {name: trend_description, kind: qualitative}
+  - {name: event_explanation, kind: qualitative}
+
+backbones:
+  qwen2_5_32b:
+    provider: openai_compatible
+    model: Qwen/Qwen2.5-32B-Instruct
+    strength: 0.690
+    params:
+      # ALWAYS the loopback address: base_url is in the cache fingerprint.
+      base_url: http://127.0.0.1:8000/v1
+      api_key: none
+      temperature: 0.0
+      max_tokens: 1024
+
+# FOUR arms. `bare_features` (C2-5) sees the series plus the same numeric
+# evidence block as the harness's model, with no routing: it separates
+# "does the computation help" from "does the scaffolding help".
+systems:
+  - {name: bare_llm,       kind: bare_llm,     backbone: qwen2_5_32b}
+  - {name: bare_features,  kind: bare_llm,     backbone: qwen2_5_32b, params: {features: true}}
+  - {name: harness,        kind: harness_tsfm, backbone: qwen2_5_32b, routing: self}
+  - {name: harness_oracle, kind: harness_tsfm, backbone: qwen2_5_32b, routing: oracle}
+
+tsfm:
+  name: chronos
+  model_id: amazon/chronos-t5-small
+  device_map: cuda                  # float32 + cpu if bf16 is unavailable
+  torch_dtype: bfloat16
+  num_samples: 20                   # the Chronos paper's default
+
+judge: {enabled: false}
+
+scoring:
+  tol: 0.05
+  loc_tol: 2
+  fixed_mase_denominator: true
+
+analysis:
+  alpha: 0.05
+  min_effect: 0.02
+  min_n_per_cell: 255
+  n_boot: 5000
+  correction: holm
+  confirmatory_contrast: [bare_llm, harness]
+  # DECLARED family. A qualitative cell leaves it if the best constant
+  # answer scores at least as high as both arms (C2-7); m is what survives.
+  confirmatory_family: [forecasting]
+  secondary_contrast: [harness, harness_oracle]
+  # Declared secondary contrasts, effects and CIs only, outside the
+  # correction: [lower arm, higher arm].
+  extra_contrasts:
+    - [bare_llm, bare_features]
+    - [bare_features, harness]
+  framing_variance_threshold: 0.20
+  reference_L: 128
+harness:
+  numeric_final: direct
+  assist_qualitative: true

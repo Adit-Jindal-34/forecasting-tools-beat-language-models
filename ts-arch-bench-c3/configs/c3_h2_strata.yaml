@@ -1,0 +1,122 @@
+# CYCLE 3 - H2 REFRAMED onto series character. PREREGISTRATION_C3.md C3-6.
+#
+# WHY H2 HAD TO BE REFRAMED
+# -------------------------
+# Cycle 2's H2 asked "does the architectural gap depend on WHAT IS ASKED?"
+# and crossed nine query types. On real data there is exactly one legitimate
+# label - the held-out future - so eight of those nine arms do not exist and
+# the question has nothing left to contrast.
+#
+# What replaces it is the question cycle 2 could only answer post hoc: does
+# the gap depend on the SERIES? At 32B the harness gained +0.170 on seasonal
+# series against +0.014 on non-seasonal ones. That is the largest
+# conditional effect cycle 2 found and it was never a declared test. Here it
+# is one.
+#
+# ⚠ THIS CONTRAST IS TWO-SAMPLE, NOT PAIRED. L and backbone hold the SAME
+# items at both ends (invariants I1/I2), which is what makes a
+# difference-in-differences legitimate there. A weak-seasonality series and a
+# strong-seasonality one are DIFFERENT SERIES, so Delta_i does not exist.
+# `confirmatory_did` refuses axis='stratum' outright;
+# runners/h2_series_character.py runs the unpaired form.
+#
+# ⚠ STRATUM IS PARTIALLY CONFOUNDED WITH ARCHIVE. Weak-seasonality series
+# long enough for this geometry come overwhelmingly from `weather` (106 of
+# 120); the strong arm is balanced 30/30/30/30 across all four datasets. The
+# runner therefore reports the WITHIN-DATASET contrast beside the pooled one,
+# and `weather` is the dataset that supplies both strata (106 weak, 30
+# strong), so that version is free of the archive confound and is what
+# carries the claim if the two disagree. The composition is recorded in the
+# pool's meta.json, measured rather than assumed.
+#
+#   python -m runners.h2_series_character --config configs/c3_h2_strata.yaml
+seed: 20261114
+out_dir: results/c3_h2_strata
+
+data:
+  name: real
+  design: c2
+  pool_dir: data-real/pool_h2_strata_n240
+  pool_sha256: 7d6a2e80d15636bc507734783c3582f14b19e23953ad3cae63ef8b98d263eefc
+  max_history: 512
+  horizon: 24
+
+# Single L, as H2 always was. 128 is the reference length every other cell
+# reports at, so a stratum effect here is directly comparable with the H1
+# curve and the H3 ladder.
+history_lengths: [128]
+
+query_types:
+  - {name: forecasting, kind: forecast}
+
+backbones:
+  qwen2_5_32b:
+    provider: openai_compatible
+    model: Qwen/Qwen2.5-32B-Instruct
+    strength: 0.690
+    params:
+      base_url: http://127.0.0.1:8000/v1
+      api_key: none
+      temperature: 0.0
+      max_tokens: 1024
+
+# Four arms. `bare_features` is kept here for the same reason as on the
+# L-sweep: if computed features ever help on real data, a weak-seasonality
+# series - where the structure is hard to see by eye in a digit string - is
+# where it should show up.
+systems:
+  - {name: bare_llm,       kind: bare_llm,     backbone: qwen2_5_32b}
+  - {name: bare_features,  kind: bare_llm,     backbone: qwen2_5_32b, params: {features: true}}
+  - {name: harness,        kind: harness_tsfm, backbone: qwen2_5_32b, routing: self}
+  - {name: harness_oracle, kind: harness_tsfm, backbone: qwen2_5_32b, routing: oracle}
+
+tsfm:
+  name: chronos
+  model_id: amazon/chronos-t5-small
+  device_map: cuda
+  torch_dtype: bfloat16
+  num_samples: 20
+
+judge: {enabled: false}
+
+scoring:
+  tol: 0.05
+  loc_tol: 2
+  fixed_mase_denominator: true
+
+analysis:
+  alpha: 0.05
+  min_effect: 0.02
+  # 120 per stratum; the two-sample test's n is the smaller arm.
+  min_n_per_cell: 100
+  n_boot: 5000
+  correction: holm
+  confirmatory_contrast: [bare_llm, harness]
+  confirmatory_family: [forecasting]
+  secondary_contrast: [harness, harness_oracle]
+  extra_contrasts:
+    - [bare_llm, bare_features]
+    - [bare_features, harness]
+  framing_variance_threshold: 0.20
+  cluster_unit: sample_id
+  cluster_unit_sensitivity: [dataset_id]
+
+  # The declared stratum contrast, weak first. Positive means the harness's
+  # advantage is LARGER on weak-seasonality series.
+  stratum_contrast: [weak, strong]
+  # Datasets that supply BOTH strata get a within-dataset contrast reported
+  # beside the pooled one. Resolved from the data, but the RULE is fixed
+  # here: a dataset qualifies if it holds at least this many items in each
+  # stratum.
+  min_items_per_stratum_for_within_dataset: 20
+
+harness:
+  numeric_final: direct
+  assist_qualitative: true
+
+# Execution only: how many items are sent to the model server at once. Not
+# part of any fingerprint or cache key, and tests/test_parallel.py checks
+# the scored output is the same as with `workers: 1`. Set it to 1 to run
+# one request at a time, as cycle 2 did.
+inference:
+  workers: 8

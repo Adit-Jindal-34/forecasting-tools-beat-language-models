@@ -1,0 +1,98 @@
+# NULL FIXTURE. The harness MUST NOT win here. If it does, the pipeline is
+# manufacturing a difference and every real result is suspect.
+#
+# WHY THIS EXISTS
+# ---------------
+# `smoke_h*.yaml` vary BACKBONE STRENGTH (0.25 / 0.60 / 0.90). None of them
+# varies the HARNESS EFFECT, so the smoke suite can confirm that the
+# pipeline reports an effect it was built to report, and cannot detect the
+# one failure the benchmark exists to rule out: a harness that scores higher
+# for reasons that have nothing to do with answering better.
+#
+# Running this config is the detector. Both arms are made equivalent BY
+# CONSTRUCTION, so the correct outcome is a contrast indistinguishable from
+# zero and no declared win. `tests/test_null_fixture.py` asserts exactly
+# that, and it is the test that fails if someone later makes the scorer,
+# the parser or the prompt quietly favour one arm.
+#
+# WHAT MAKES THE ARMS EQUIVALENT
+# ------------------------------
+#   mocks.assist_effect: 0.0
+#     MockLLM decides how well to answer by SNIFFING THE PROMPT for the
+#     harness's "computed features:" marker (models/llm.py `_do_qual`).
+#     Historically that selected between two hand-set success rates -
+#     0.75+0.20*strength assisted, 0.50+0.45*strength bare - AND two
+#     different failure breadths: the assisted path corrupted only `trend`
+#     while the bare path corrupted all four slots. Either channel alone
+#     hands the harness a win no scorer could see through. At 0.0 both the
+#     rate and the breadth are matched, so the mock is arm-blind.
+#
+# WHY ONLY THE QUALITATIVE CELLS
+# ------------------------------
+# A WHOLE-PIPELINE null is not constructible with this mock, and pretending
+# otherwise would be the bug this file is meant to catch:
+#   * numeric cells - the harness routes to an exact tool in systems/tools.py
+#     while the bare arm does in-head arithmetic. The harness SHOULD win.
+#     That is a real tool advantage, not an artifact.
+#   * forecasting   - the harness calls the TSFM, the bare arm extrapolates
+#     in-head. Also a real difference.
+# Only `trend_description` and `event_explanation` send BOTH arms through
+# the LLM for the answer itself, so only there can "equally correct" be
+# arranged. Those are also the two cells whose measured effects are the
+# largest and rest on the slot scorer, which is precisely why they are the
+# ones worth instrumenting.
+#
+# A null on the numeric path needs a different construction (a tool with
+# injected error matched to the mock's arithmetic error). NOT built here;
+# see PREREGISTRATION.md D8.
+seed: 20261107
+out_dir: results/null_fixture
+
+data:
+  name: synthetic
+  pool_dir: data/null_fixture
+  max_history: 256
+  horizon: 8
+  n_base_series: 300
+  n_per_query_type: 300
+  level_range: [20, 120]
+  patterns: [trend, seasonality, multi_seasonality, noise, spikes, abrupt_change, mixed]
+
+history_lengths: [128]
+
+# Only the two cells where a null is constructible. See the header.
+query_types:
+  - {name: trend_description, kind: qualitative}
+  - {name: event_explanation, kind: qualitative}
+
+backbones:
+  mock_null: {provider: mock, model: mock-llm, strength: 0.6}
+
+systems:
+  - {name: bare_llm,       kind: bare_llm,     backbone: mock_null}
+  - {name: harness,        kind: harness_tsfm, backbone: mock_null, routing: self}
+  - {name: harness_oracle, kind: harness_tsfm, backbone: mock_null, routing: oracle}
+
+tsfm: {name: mock_tsfm, noise: 0.0}
+
+# assist_effect: 0.0 is the whole point of this file. error_scale and
+# length_effect are irrelevant to qualitative cells but pinned for
+# determinism. prose_rate 0.0 keeps the routing reply parseable, so a
+# routing failure cannot be mistaken for a scoring difference.
+mocks: {error_scale: 0.0, prose_rate: 0.0, length_effect: 0.0, assist_effect: 0.0}
+
+judge: {enabled: false}
+scoring: {tol: 0.05, loc_tol: 2, fixed_mase_denominator: true}
+
+analysis:
+  alpha: 0.05
+  min_effect: 0.02
+  min_n_per_cell: 50
+  n_boot: 2000
+  correction: holm
+  confirmatory_contrast: [bare_llm, harness]
+  confirmatory_family: [trend_description, event_explanation]
+  secondary_contrast: [harness, harness_oracle]
+  framing_variance_threshold: 0.20
+
+harness: {numeric_final: direct, assist_qualitative: true}
