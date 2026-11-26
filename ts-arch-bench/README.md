@@ -18,10 +18,9 @@ README's three-architecture framing was wrong.
 
 ## Why this build exists
 
-This is a rewrite of `D:\ts-arch-bench` after an audit found defects that
-invalidated published numbers. The audit is in
-[the remediation plan](https://claude.ai/artifact/Q2GWBb59ga2XzmcKu8iq3X).
-Every fix below has a regression test; `pytest` fails if one is undone.
+This is a rewrite of an earlier build after an audit found defects that
+invalidated published numbers. Every fix below has a regression test;
+`pytest` fails if one is undone.
 
 | # | Defect in the old build | Fix here | Test |
 |---|---|---|---|
